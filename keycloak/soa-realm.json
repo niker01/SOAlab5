@@ -1,0 +1,195 @@
+{
+  "realm": "soa",
+  "enabled": true,
+  "registrationAllowed": true,
+  "loginWithEmailAllowed": true,
+  "duplicateEmailsAllowed": false,
+  "resetPasswordAllowed": true,
+  "clients": [
+    {
+      "clientId": "soa-postman",
+      "name": "SOAlab Postman",
+      "enabled": true,
+      "publicClient": true,
+      "standardFlowEnabled": true,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": false,
+      "redirectUris": [
+        "https://oauth.pstmn.io/v1/callback",
+        "http://localhost:3000/*"
+      ],
+      "webOrigins": [
+        "https://cad.kpi.ua",
+        "http://localhost:3000"
+      ],
+      "attributes": {
+        "pkce.code.challenge.method": "S256"
+      },
+      "defaultClientScopes": [
+        "basic",
+        "todo-api-audience"
+      ],
+      "optionalClientScopes": [
+        "email",
+        "users:read",
+        "users:write",
+        "tasks:read",
+        "tasks:write",
+        "notifications:read",
+        "notifications:write",
+        "mcp:use",
+        "ai:use",
+        "a2a:invoke"
+      ]
+    },
+    {
+      "clientId": "cad-kpi-client",
+      "name": "CAD KPI website",
+      "enabled": true,
+      "publicClient": true,
+      "standardFlowEnabled": true,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": false,
+      "redirectUris": [
+        "https://cad.kpi.ua/*"
+      ],
+      "webOrigins": [
+        "https://cad.kpi.ua"
+      ],
+      "attributes": {
+        "pkce.code.challenge.method": "S256"
+      },
+      "defaultClientScopes": [
+        "basic",
+        "todo-api-audience"
+      ],
+      "optionalClientScopes": [
+        "email",
+        "users:read",
+        "users:write",
+        "tasks:read",
+        "tasks:write",
+        "notifications:read",
+        "notifications:write",
+        "mcp:use",
+        "ai:use",
+        "a2a:invoke"
+      ]
+    }
+  ],
+  "clientScopes": [
+    {
+      "name": "basic",
+      "description": "Include the authenticated subject in access tokens",
+      "protocol": "openid-connect",
+      "attributes": {
+        "include.in.token.scope": "false",
+        "display.on.consent.screen": "false"
+      },
+      "protocolMappers": [
+        {
+          "name": "sub",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-sub-mapper",
+          "consentRequired": false,
+          "config": {
+            "access.token.claim": "true",
+            "introspection.token.claim": "true"
+          }
+        }
+      ]
+    },
+    {
+      "name": "email",
+      "description": "Include the authenticated user's email in tokens",
+      "protocol": "openid-connect",
+      "attributes": {
+        "include.in.token.scope": "true",
+        "display.on.consent.screen": "true"
+      },
+      "protocolMappers": [
+        {
+          "name": "email",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-property-mapper",
+          "consentRequired": false,
+          "config": {
+            "user.attribute": "email",
+            "claim.name": "email",
+            "jsonType.label": "String",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "userinfo.token.claim": "true"
+          }
+        }
+      ]
+    },
+    {
+      "name": "todo-api-audience",
+      "description": "Include the SOAlab API as an access-token audience",
+      "protocol": "openid-connect",
+      "attributes": {
+        "include.in.token.scope": "false",
+        "display.on.consent.screen": "false"
+      },
+      "protocolMappers": [
+        {
+          "name": "SOAlab API custom audience",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "consentRequired": false,
+          "config": {
+            "included.custom.audience": "todo-api",
+            "access.token.claim": "true",
+            "id.token.claim": "false"
+          }
+        }
+      ]
+    },
+    {
+      "name": "users:read",
+      "description": "Read the authenticated user's profile",
+      "protocol": "openid-connect"
+    },
+    {
+      "name": "users:write",
+      "description": "Delete the authenticated user's application profile",
+      "protocol": "openid-connect"
+    },
+    {
+      "name": "tasks:read",
+      "description": "Read tasks and task lists",
+      "protocol": "openid-connect"
+    },
+    {
+      "name": "tasks:write",
+      "description": "Create, update, assign, and delete tasks and task lists",
+      "protocol": "openid-connect"
+    },
+    {
+      "name": "notifications:read",
+      "description": "Read reminders and notification records",
+      "protocol": "openid-connect"
+    },
+    {
+      "name": "notifications:write",
+      "description": "Create, update, and delete reminders and notification records",
+      "protocol": "openid-connect"
+    },
+    {
+      "name": "mcp:use",
+      "description": "Connect to the SOAlab MCP server",
+      "protocol": "openid-connect"
+    },
+    {
+      "name": "ai:use",
+      "description": "Use the Function Calling endpoint",
+      "protocol": "openid-connect"
+    },
+    {
+      "name": "a2a:invoke",
+      "description": "Invoke SOAlab A2A agents",
+      "protocol": "openid-connect"
+    }
+  ]
+}

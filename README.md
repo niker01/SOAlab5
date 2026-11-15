@@ -33,8 +33,7 @@ SOAlab/
 │   ├── requirements.txt      # Залежності AI-сервісів
 │   └── Dockerfile
 ├── user-service/
-│   ├── main.py               # Реєстрація, вхід і API користувачів
-│   ├── schemas.py             # Схеми запитів і відповідей
+│   ├── main.py               # API профілів користувачів із Keycloak JWT
 │   ├── database.py            # Робота з базою даних користувачів
 │   ├── rabbitmq.py             # Обмін подіями через RabbitMQ
 │   ├── requirements.txt
@@ -55,7 +54,11 @@ SOAlab/
 │   └── Dockerfile
 ├── nginx/
 │   └── nginx.conf             # Маршрутизація API-запитів до сервісів
-├── docker-compose.yml         # Сервіси, мережа, порти й volumes
+├── auth.py                    # Спільна перевірка JWT, OAuth scopes і CORS
+├── keycloak/
+│   ├── soa-realm.json         # Realm, OAuth clients, scopes та PKCE
+│   └── configure-atlassian.sh # Необов'язкове підключення Atlassian OIDC
+├── docker-compose.yml         # Сервіси, Keycloak, мережа, порти й volumes
 ├── .env.example               # Шаблон змінних середовища
 ├── .dockerignore
 ├── .gitignore
@@ -66,27 +69,32 @@ SOAlab/
 
 ## 1. Налаштування
 
-Потрібні Docker Desktop із запущеним Docker Engine та Postman. Function Calling можна перевірити у mock-режимі без OpenAI API-ключа або у звичайному режимі з ключем. REST API, MCP і A2A OpenAI-ключа не потребують.
+Потрібні Docker Desktop із запущеним Docker Engine та Postman. Проєкт використовує Keycloak як OAuth 2.0 / OpenID Connect сервер: для захищених запитів отримуй JWT через Authorization Code flow з PKCE. Keycloak не запуститься, доки в `.env` не буде задано власний `KEYCLOAK_ADMIN_PASSWORD`. Не використовуй локальні навчальні значення в публічному розгортанні.
 
-Якщо хочеш використовувати Function Calling, створи локальний `.env` із шаблону:
+Якщо `.env` ще не існує, створи його з шаблону:
 
 ```powershell
 Copy-Item .env.example .env
 notepad .env
 ```
 
-У файлі заміни значення `OPENAI_API_KEY` на власний ключ, збережи й закрий його. Не додавай ключ до Postman або `.env.example`. Файл `.env` ігнорується Git.
+Задай у `.env` `KEYCLOAK_ADMIN_PASSWORD` на власне локальне значення. Якщо файл уже існує, не перезаписуй його: додай відсутні Keycloak-змінні, зберігши поточні налаштування. `.env` ігнорується Git і Docker build context.
 
-Приклад вмісту `.env`:
+Щоб увімкнути зовнішній вхід через Atlassian, зареєструй OAuth 2.0 (3LO) app у Atlassian Developer Console і додай у `.env` отримані `ATLASSIAN_CLIENT_ID` та `ATLASSIAN_CLIENT_SECRET`. Redirect URI для app:
 
-```dotenv
-OPENAI_API_KEY=твій-ключ
-OPENAI_MODEL=gpt-4o-mini
-AI_FUNCTION_CALLING_MODE=openai
+```text
+http://localhost:8081/realms/soa/broker/atlassian/endpoint
 ```
 
-Якщо `.env` вже існує, не копіюй шаблон повторно — просто відредагуй файл.
-Для роботи без API-кредитів установи `AI_FUNCTION_CALLING_MODE=mock`. Mock-режим не викликає OpenAI, не витрачає токени й підтримує лише описані нижче демонстраційні дії.
+Після першого запуску Keycloak створи або онови Atlassian IdP:
+
+```powershell
+docker compose --profile idp-setup up --force-recreate keycloak-idp-setup
+```
+
+Якщо credentials порожні, скрипт пропустить налаштування провайдера. У production заміни локальні issuer/public URL та Atlassian callback на HTTPS-адресу Keycloak.
+
+Function Calling можна запускати в `mock` режимі без OpenAI API-ключа або в `openai` режимі з ключем. Не додавай OpenAI чи Atlassian secrets до Postman, README або `.env.example`.
 
 ## 2. Запуск і зупинка
 
@@ -97,6 +105,8 @@ docker compose up --build -d
 docker compose ps
 ```
 
+Keycloak доступний на `http://localhost:8081`; realm і OAuth clients імпортуються з `keycloak/soa-realm.json` під час першого запуску. Адміністратор входить із credentials із `.env`. Realm `soa` дозволяє самостійну реєстрацію користувачів.
+
 Переглянути логи:
 
 ```powershell
@@ -106,6 +116,7 @@ docker compose logs --tail=100 notification-service
 docker compose logs --tail=100 producer-agent
 docker compose logs --tail=100 consumer-agent
 docker compose logs --tail=100 mcp-server
+docker compose logs --tail=100 keycloak
 ```
 
 Зупинити сервіси, зберігши дані:
@@ -114,9 +125,9 @@ docker compose logs --tail=100 mcp-server
 docker compose down
 ```
 
-Не додавай `-v`, якщо потрібно зберегти користувачів і тестові дані у Docker volumes.
+Не додавай `-v`, якщо потрібно зберегти Keycloak-користувачів, локальні профілі й тестові дані у Docker volumes.
 
-Основна адреса для запитів через Nginx — `http://localhost:8080`. Сервіси також доступні напряму: User Service на `8001`, Task Service на `8002`, Notification Service на `8003`. Інтерфейси Swagger:
+Основна адреса для запитів через Nginx — `http://localhost:8080`. Keycloak працює на `http://localhost:8081`. Сервіси також доступні напряму: User Service на `8001`, Task Service на `8002`, Notification Service на `8003`. Інтерфейси Swagger:
 
 - `http://localhost:8001/docs`
 - `http://localhost:8002/docs`
@@ -130,49 +141,63 @@ docker compose down
 |---|---|
 | `base_url` | `http://localhost:8080` |
 | `access_token` | заповнити після входу |
-| `user_id` | заповнити після реєстрації |
+| `user_id` | `sub` з Keycloak access token |
 | `task_id` | заповнити після створення задачі |
 | `list_id` | заповнити після створення списку |
 
 Для запитів із JSON вибирай **Body → raw → JSON**. Для запитів, що потребують авторизації, встанови **Authorization → Bearer Token** і значення `{{access_token}}`.
 
-## 4. Реєстрація та вхід
+## 4. OAuth2 вхід через Postman
 
-### Зареєструвати тестового користувача
+Реєстрація та пароль обробляються Keycloak; старі `/users/register` і `/users/login` більше не створюють локальні або підроблені токени. У Postman відкрий **Authorization → OAuth 2.0 → Get New Access Token** і задай:
 
-Створи запит `Register user`:
+Попередні `fake-jwt-token` та користувачі зі старого локального login flow не мігрують автоматично. Для нового тесту створи обліковий запис у Keycloak; якщо в локальній БД уже є профіль з таким email, User Service поверне `409`, щоб не прив’язати його непомітно до іншої identity.
 
-- Method: `POST`
-- URL: `{{base_url}}/users/register`
-- Body:
+| Налаштування | Значення |
+|---|---|
+| Grant Type | Authorization Code (With PKCE) |
+| Callback URL | `https://oauth.pstmn.io/v1/callback` |
+| Auth URL | `http://localhost:8081/realms/soa/protocol/openid-connect/auth` |
+| Access Token URL | `http://localhost:8081/realms/soa/protocol/openid-connect/token` |
+| Client ID | `soa-postman` |
+| Client Secret | порожньо (public client) |
+| Code Challenge Method | `S256` |
 
-```json
-{
-  "email": "ai-test@example.com",
-  "password": "test-password"
-}
+У запитуваних scopes вкажи тільки потрібні. Для повного набору Postman-прикладів можна використати:
+
+```text
+openid profile email users:read users:write tasks:read tasks:write notifications:read notifications:write ai:use mcp:use a2a:invoke
 ```
 
-З відповіді збережи `user.id` у змінну `user_id`. Реєструй цю адресу лише один раз. Якщо користувач уже є, переходь одразу до входу.
+Натисни **Get New Access Token**, увійди локальним Keycloak-користувачем або вибери Atlassian, якщо IdP налаштовано, а потім **Use Token**. Збережи access token у `{{access_token}}` та передавай його як Bearer Token. У браузерному клієнті кафедри використовується client ID `cad-kpi-client`, Authorization Code з PKCE та redirect URI на `https://cad.kpi.ua`.
 
-### Увійти
+Scopes розділені за ресурсами:
 
-Створи запит `Login user`:
+| Scope | Доступ |
+|---|---|
+| `users:read`, `users:write` | читання профілю / видалення локального профілю |
+| `tasks:read`, `tasks:write` | читання / зміна задач і списків |
+| `notifications:read`, `notifications:write` | читання / зміна reminders і notifications |
+| `ai:use` | виклик Function Calling |
+| `mcp:use` | під'єднання до MCP tools |
+| `a2a:invoke` | виклик A2A агентів |
 
-- Method: `POST`
-- URL: `{{base_url}}/users/login`
-- Body:
+Наприклад, створення reminder додатково потребує `tasks:read` для перевірки власності задачі та `notifications:write`. Мікросервіси перевіряють scope самостійно; одного дозволу на gateway недостатньо.
 
-```json
-{
-  "email": "ai-test@example.com",
-  "password": "test-password"
+FastAPI дозволяє CORS-запити з `https://cad.kpi.ua` (і локальних адрес для тестування). Nginx явно передає `Authorization` та `Origin` до сервісу, а CORS-відповідь не перезаписує. Перевір preflight у PowerShell:
+
+```powershell
+$corsHeaders = @{
+  Origin = "https://cad.kpi.ua"
+  "Access-Control-Request-Method" = "GET"
+  "Access-Control-Request-Headers" = "authorization,content-type"
 }
+Invoke-WebRequest -Method Options -Uri "http://localhost:8080/tasks" -Headers $corsHeaders
 ```
 
-З відповіді збережи `access_token` у змінну `access_token`. Для захищених запитів передавай його як Bearer-токен.
+У відповіді очікуй `Access-Control-Allow-Origin: https://cad.kpi.ua`. Для іншого production hostname додай його до `CORS_ORIGINS` без wildcard.
 
-> Токен у проєкті навчальний (`fake-jwt-token-...`), не має криптографічного підпису й не призначений для production.
+OAuth access token — це підписаний JWT. Кожний API сервіс перевіряє підпис через Keycloak JWKS, `issuer`, `audience`, строк дії та потрібні scopes у [auth.py](./auth.py); відсутній scope повертає HTTP 403. Старий формат `fake-jwt-token-...` більше не приймається.
 
 ## 5. REST API через Postman
 
@@ -202,6 +227,14 @@ docker compose down
 ```
 
 Збережи `task.id` у `task_id`. Для дати використовуй ISO 8601, наприклад `2030-01-02T15:30:00`. Створення задачі з датою запускає Saga для створення нагадування; для першої перевірки можна залишити `due_date` рівним `null`.
+
+У Windows PowerShell для JSON-запиту зручніше використовувати `Invoke-RestMethod`, щоб уникнути проблем з екрануванням лапок у `curl.exe`:
+
+```powershell
+$headers = @{ Authorization = "Bearer $accessToken" }
+$body = @{ title = "Перевірити API" } | ConvertTo-Json -Compress
+Invoke-RestMethod -Method Post -Uri "http://localhost:8080/tasks" -Headers $headers -ContentType "application/json" -Body $body
+```
 
 ### Переглянути й оновити задачі
 
@@ -322,7 +355,7 @@ MCP — це окремий протокол, тому цей тест вико�
 
 Повний флоу: Postman надсилає A2A-запит Producer-у → Producer створює задачу через Task Service → Task Service планує reminder на `due_date` → Producer передає `task_id` Consumer-у → Consumer перевіряє задачу й підтверджує обробку → коли настає `due_date`, Notification Service створює notification. До настання терміну notification не створюється.
 
-Перед тестом переконайся, що запущені `producer-agent`, `consumer-agent`, `task-service`, `notification-service` і `rabbitmq` (`docker compose ps`), а в Postman після `Login user` встановлена змінна `{{access_token}}`. Додай у Postman environment змінну `due_date` з майбутнім часом ISO 8601, наприклад `2030-01-02T15:00:00+02:00`. Щоб перевірити появу notification під час тесту, встанови її приблизно на 1–2 хвилини вперед від поточного локального часу. Перед запуском переглянь `GET {{base_url}}/tasks`, `GET {{base_url}}/reminders` і `GET {{base_url}}/notifications`, щоб відрізняти нові записи.
+Перед тестом переконайся, що запущені `producer-agent`, `consumer-agent`, `task-service`, `notification-service` і `rabbitmq` (`docker compose ps`), а в Postman після OAuth2 Authorization Code flow встановлена змінна `{{access_token}}`. Токен повинен містити `a2a:invoke`, `tasks:read` і `tasks:write`. Додай у Postman environment змінну `due_date` з майбутнім часом ISO 8601, наприклад `2030-01-02T15:00:00+02:00`. Щоб перевірити появу notification під час тесту, встанови її приблизно на 1–2 хвилини вперед від поточного локального часу. Перед запуском переглянь `GET {{base_url}}/tasks`, `GET {{base_url}}/reminders` і `GET {{base_url}}/notifications`, щоб відрізняти нові записи.
 
 Створи запит `A2A create task and schedule reminder`:
 
@@ -379,4 +412,4 @@ Agent Cards можна відкрити в Postman або браузері:
 - Producer: `GET http://localhost:8010/.well-known/agent-card.json`
 - Consumer: `GET http://localhost:8011/.well-known/agent-card.json`
 
-> A2A передає той самий Bearer-токен у внутрішньому виклику Consumer-у. Токен усе ще навчальний і не має підпису. Не виставляй стенд у публічну мережу.
+> A2A передає той самий підписаний Bearer JWT у внутрішньому виклику Consumer-у. Не виставляй Keycloak у публічну мережу з локальними обліковими даними адміністратора або без HTTPS.

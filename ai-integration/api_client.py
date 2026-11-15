@@ -1,8 +1,9 @@
 import httpx
 from fastapi import HTTPException
 
+from auth import decode_access_token
 
-USER_SERVICE_URL = "http://user-service:8000"
+
 TASK_SERVICE_URL = "http://task-service:8000"
 NOTIFICATION_SERVICE_URL = "http://notification-service:8000"
 
@@ -45,27 +46,12 @@ def api_request(
     return response.json()
 
 
-def require_bearer_token(authorization: str | None) -> str:
-    if not authorization or not authorization.startswith("Bearer "):
-        raise HTTPException(status_code=401, detail="Bearer token required")
-    token = authorization[len("Bearer "):].strip()
-    if not token:
-        raise HTTPException(status_code=401, detail="Bearer token required")
-    return token
-
-
 def get_current_user(token: str) -> dict:
-    users = api_request(USER_SERVICE_URL, "GET", "/users", token)
-    if not isinstance(users, list) or not users or not isinstance(users[0], dict):
+    claims = decode_access_token(token)
+    if not claims.get("email"):
         raise HTTPException(status_code=401, detail="Could not verify current user")
-    user = users[0]
-    if not user.get("id") or not user.get("email"):
-        raise HTTPException(status_code=401, detail="Could not verify current user")
-    return user
+    return {"id": claims["sub"], "email": claims["email"]}
 
 
 def token_subject(token: str) -> str:
-    prefix = "fake-jwt-token-"
-    if not token.startswith(prefix) or not token[len(prefix):]:
-        raise HTTPException(status_code=401, detail="Invalid token")
-    return token[len(prefix):]
+    return decode_access_token(token)["sub"]

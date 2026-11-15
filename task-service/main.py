@@ -8,6 +8,7 @@ from typing import List, Optional
 
 from fastapi import FastAPI, Header, HTTPException
 
+from auth import install_cors, verify_authorization
 from database import db_connection, enqueue_event, initialize_database
 from rabbitmq import (
     publish_outbox_forever,
@@ -19,6 +20,7 @@ from schemas import TaskAssignList, TaskCreate, TaskListCreate, TaskListUpdate, 
 
 app = FastAPI(title="Task Service")
 logger = logging.getLogger(__name__)
+install_cors(app)
 SAGA_TIMEOUT_SECONDS = float(os.getenv("SAGA_TIMEOUT_SECONDS", "10"))
 SAGA_COMPENSATION_WAIT_SECONDS = 3
 
@@ -63,14 +65,11 @@ def _ensure_no_active_saga(connection, task_id: str):
         )
 
 
-def verify_token(authorization: Optional[str] = Header(None)):
-    if not authorization or not authorization.startswith("Bearer "):
-        raise HTTPException(status_code=401, detail="Unauthorized")
-    token = authorization[len("Bearer "):].strip()
-    token_prefix = "fake-jwt-token-"
-    if not token.startswith(token_prefix) or not token[len(token_prefix):]:
-        raise HTTPException(status_code=401, detail="Invalid token")
-    return token[len(token_prefix):]
+def verify_token(
+    authorization: Optional[str],
+    required_scope: str,
+) -> str:
+    return verify_authorization(authorization, [required_scope])["sub"]
 
 
 def compensate_saga(saga_id: str, reason: str) -> None:
@@ -255,7 +254,7 @@ def startup_event():
 
 @app.post("/lists", status_code=201)
 def create_list(data: TaskListCreate, authorization: Optional[str] = Header(None)):
-    user_id = verify_token(authorization)
+    user_id = verify_token(authorization, "tasks:write")
     list_id = str(uuid.uuid4())
     task_list = {"id": list_id, "user_id": user_id, "title": data.title}
     with db_connection() as connection:
@@ -268,7 +267,7 @@ def create_list(data: TaskListCreate, authorization: Optional[str] = Header(None
 
 @app.get("/lists", response_model=List[dict])
 def get_lists(authorization: Optional[str] = Header(None)):
-    user_id = verify_token(authorization)
+    user_id = verify_token(authorization, "tasks:read")
     with db_connection() as connection:
         lists = connection.execute(
             "SELECT id, user_id, title FROM task_lists WHERE user_id = ?",
@@ -279,7 +278,7 @@ def get_lists(authorization: Optional[str] = Header(None)):
 
 @app.get("/lists/{list_id}", response_model=dict)
 def get_list(list_id: str, authorization: Optional[str] = Header(None)):
-    user_id = verify_token(authorization)
+    user_id = verify_token(authorization, "tasks:read")
     with db_connection() as connection:
         return _row_dict(_get_list(connection, list_id, user_id))
 
@@ -290,7 +289,7 @@ def update_list(
     data: TaskListUpdate,
     authorization: Optional[str] = Header(None)
 ):
-    user_id = verify_token(authorization)
+    user_id = verify_token(authorization, "tasks:write")
     with db_connection() as connection:
         task_list = _get_list(connection, list_id, user_id)
         connection.execute(
@@ -303,7 +302,7 @@ def update_list(
 
 @app.delete("/lists/{list_id}", status_code=200)
 def delete_list(list_id: str, authorization: Optional[str] = Header(None)):
-    user_id = verify_token(authorization)
+    user_id = verify_token(authorization, "tasks:write")
     with db_connection() as connection:
         _get_list(connection, list_id, user_id)
         affected_tasks = connection.execute(
@@ -330,7 +329,7 @@ def delete_list(list_id: str, authorization: Optional[str] = Header(None)):
 
 @app.post("/tasks", status_code=201)
 def create_task(task: TaskCreate, authorization: Optional[str] = Header(None)):
-    user_id = verify_token(authorization)
+    user_id = verify_token(authorization, "tasks:write")
     task_id = str(uuid.uuid4())
     new_task = {
         "id": task_id,
@@ -403,7 +402,7 @@ def create_task(task: TaskCreate, authorization: Optional[str] = Header(None)):
 
 @app.get("/tasks", response_model=List[dict])
 def get_tasks(authorization: Optional[str] = Header(None)):
-    user_id = verify_token(authorization)
+    user_id = verify_token(authorization, "tasks:read")
     with db_connection() as connection:
         tasks = connection.execute(
             """
@@ -417,7 +416,7 @@ def get_tasks(authorization: Optional[str] = Header(None)):
 
 @app.get("/tasks/{task_id}", response_model=dict)
 def get_task(task_id: str, authorization: Optional[str] = Header(None)):
-    user_id = verify_token(authorization)
+    user_id = verify_token(authorization, "tasks:read")
     with db_connection() as connection:
         task = _get_task(connection, task_id, user_id)
     return {
@@ -433,7 +432,7 @@ def update_task(
     data: TaskUpdate,
     authorization: Optional[str] = Header(None)
 ):
-    user_id = verify_token(authorization)
+    user_id = verify_token(authorization, "tasks:write")
     saga_id = None
     with db_connection() as connection:
         connection.execute("BEGIN IMMEDIATE")
@@ -521,7 +520,7 @@ def assign_task_to_list(
     data: TaskAssignList,
     authorization: Optional[str] = Header(None)
 ):
-    user_id = verify_token(authorization)
+    user_id = verify_token(authorization, "tasks:write")
     with db_connection() as connection:
         connection.execute("BEGIN IMMEDIATE")
         task = _get_task(connection, task_id, user_id)
@@ -550,7 +549,7 @@ def assign_task_to_list(
 
 @app.delete("/tasks/{task_id}", status_code=200)
 def delete_task(task_id: str, authorization: Optional[str] = Header(None)):
-    user_id = verify_token(authorization)
+    user_id = verify_token(authorization, "tasks:write")
     with db_connection() as connection:
         connection.execute("BEGIN IMMEDIATE")
         _get_task(connection, task_id, user_id)

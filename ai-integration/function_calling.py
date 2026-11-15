@@ -10,6 +10,7 @@ from fastapi import FastAPI, Header, HTTPException
 from openai import OpenAI
 from pydantic import BaseModel, ConfigDict, Field
 
+from auth import install_cors, require_bearer_token
 from ai_database import release_tokens, reserve_tokens, settle_tokens
 from api_client import (
     APIRequestError,
@@ -17,13 +18,13 @@ from api_client import (
     TASK_SERVICE_URL,
     api_request,
     get_current_user,
-    require_bearer_token,
     token_subject,
 )
 
 
 logger = logging.getLogger(__name__)
 app = FastAPI(title="AI Function Calling Client")
+install_cors(app)
 MAX_PROMPT_CHARS = 3000
 MAX_COMPLETION_TOKENS = 400
 MAX_TOOL_ROUNDS = 5
@@ -344,7 +345,7 @@ def chat(
     request: ChatRequest,
     authorization: str | None = Header(default=None),
 ):
-    token = require_bearer_token(authorization)
+    token = require_bearer_token(authorization, ["ai:use"])
     user_id = token_subject(token)
     current_user = get_current_user(token)
     if current_user["id"] != user_id:

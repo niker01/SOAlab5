@@ -37,12 +37,11 @@ from a2a.types import (
 )
 from pydantic import BaseModel, ConfigDict, Field
 
+from auth import install_cors, require_bearer_token
 from api_client import (
     APIRequestError,
     TASK_SERVICE_URL,
     api_request,
-    get_current_user,
-    require_bearer_token,
 )
 
 
@@ -75,7 +74,7 @@ class ConsumeTaskEvent(BaseModel):
 def _request_token(context: RequestContext) -> str:
     headers = context.call_context.state.get("headers", {})
     authorization = headers.get("authorization") or headers.get("Authorization")
-    return require_bearer_token(authorization)
+    return require_bearer_token(authorization, ["a2a:invoke"])
 
 
 async def _notify_consumer(task: dict, token: str) -> None:
@@ -189,7 +188,6 @@ class TodoAgentExecutor(AgentExecutor):
 
     async def _produce_task(self, data: dict, token: str) -> dict:
         request = ProduceTaskRequest.model_validate(data)
-        user = get_current_user(token)
         task_result = api_request(
             TASK_SERVICE_URL,
             "POST",
@@ -339,6 +337,7 @@ def _build_app(role: str) -> FastAPI:
         agent_card=agent_card,
     )
     app = FastAPI(title=agent_card.name)
+    install_cors(app)
     if role == "producer":
         app.mount("/ai", function_calling_app)
     add_a2a_routes_to_fastapi(

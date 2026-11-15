@@ -1,4 +1,45 @@
 services:
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.8.2
+    command: ["start-dev", "--import-realm"]
+    ports:
+      - "8081:8080"
+    environment:
+      KC_BOOTSTRAP_ADMIN_USERNAME: ${KEYCLOAK_ADMIN:-admin}
+      KC_BOOTSTRAP_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:?Set KEYCLOAK_ADMIN_PASSWORD in .env}
+      KC_HTTP_ENABLED: "true"
+      KC_HEALTH_ENABLED: "true"
+      KC_HOSTNAME: ${KEYCLOAK_PUBLIC_URL:-http://localhost:8081}
+      KC_HOSTNAME_STRICT: "false"
+    volumes:
+      - keycloak_data:/opt/keycloak/data
+      - ./keycloak/soa-realm.json:/opt/keycloak/data/import/soa-realm.json:ro
+    healthcheck:
+      test: ["CMD", "/bin/bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/9000"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 30s
+    networks:
+      - todo-net
+
+  keycloak-idp-setup:
+    image: quay.io/keycloak/keycloak:26.8.2
+    entrypoint: ["/bin/bash", "/configure-atlassian.sh"]
+    profiles: ["idp-setup"]
+    environment:
+      KEYCLOAK_ADMIN: ${KEYCLOAK_ADMIN:-admin}
+      KEYCLOAK_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:?Set KEYCLOAK_ADMIN_PASSWORD in .env}
+      ATLASSIAN_CLIENT_ID: ${ATLASSIAN_CLIENT_ID:-}
+      ATLASSIAN_CLIENT_SECRET: ${ATLASSIAN_CLIENT_SECRET:-}
+    volumes:
+      - ./keycloak/configure-atlassian.sh:/configure-atlassian.sh:ro
+    depends_on:
+      keycloak:
+        condition: service_healthy
+    networks:
+      - todo-net
+
   rabbitmq:
     image: rabbitmq:4-management
     ports:
@@ -16,12 +57,17 @@ services:
       - todo-net
 
   user-service:
-    build: ./user-service
+    build:
+      context: .
+      dockerfile: user-service/Dockerfile
     ports:
       - "8001:8000"
-    environment:
-      - TZ=Europe/Kiev
-      - DATA_DIR=/data
+    environment: &auth-environment
+      TZ: Europe/Kiev
+      DATA_DIR: /data
+      KEYCLOAK_ISSUER: ${KEYCLOAK_ISSUER:-http://localhost:8081/realms/soa}
+      KEYCLOAK_JWKS_URL: http://keycloak:8080/realms/soa/protocol/openid-connect/certs
+      CORS_ORIGINS: ${CORS_ORIGINS:-https://cad.kpi.ua,http://localhost:3000,http://localhost:6274,http://127.0.0.1:6274}
     volumes:
       - user_data:/data
     depends_on:
@@ -31,13 +77,16 @@ services:
       - todo-net
 
   task-service:
-    build: ./task-service
+    build:
+      context: .
+      dockerfile: task-service/Dockerfile
     ports:
       - "8002:8000"
     environment:
-      - TZ=Europe/Kiev
-      - DATA_DIR=/data
-      - SAGA_TIMEOUT_SECONDS=10
+      <<: *auth-environment
+      TZ: Europe/Kiev
+      DATA_DIR: /data
+      SAGA_TIMEOUT_SECONDS: "10"
     volumes:
       - task_data:/data
     depends_on:
@@ -47,12 +96,15 @@ services:
       - todo-net
 
   notification-service:
-    build: ./notification-service
+    build:
+      context: .
+      dockerfile: notification-service/Dockerfile
     ports:
       - "8003:8000"
     environment:
-      - TZ=Europe/Kyiv
-      - DATA_DIR=/data
+      <<: *auth-environment
+      TZ: Europe/Kyiv
+      DATA_DIR: /data
     volumes:
       - notification_data:/data
     depends_on:
@@ -62,10 +114,14 @@ services:
       - todo-net
 
   mcp-server:
-    build: ./ai-integration
+    build:
+      context: .
+      dockerfile: ai-integration/Dockerfile
     command: ["uvicorn", "mcp_server:app", "--host", "0.0.0.0", "--port", "8000"]
     ports:
       - "8004:8000"
+    environment:
+      <<: *auth-environment
     depends_on:
       - user-service
       - task-service
@@ -74,13 +130,16 @@ services:
       - todo-net
 
   consumer-agent:
-    build: ./ai-integration
+    build:
+      context: .
+      dockerfile: ai-integration/Dockerfile
     command: ["uvicorn", "a2a_agent:consumer_app", "--host", "0.0.0.0", "--port", "8000"]
     ports:
       - "8011:8000"
     environment:
-      - AGENT_ROLE=consumer
-      - A2A_PUBLIC_URL=http://localhost:8011
+      <<: *auth-environment
+      AGENT_ROLE: consumer
+      A2A_PUBLIC_URL: http://localhost:8011
     depends_on:
       - user-service
       - notification-service
@@ -88,20 +147,23 @@ services:
       - todo-net
 
   producer-agent:
-    build: ./ai-integration
+    build:
+      context: .
+      dockerfile: ai-integration/Dockerfile
     command: ["uvicorn", "a2a_agent:producer_app", "--host", "0.0.0.0", "--port", "8000"]
     ports:
       - "8010:8000"
     environment:
-      - AGENT_ROLE=producer
-      - A2A_PUBLIC_URL=http://localhost:8010
-      - CONSUMER_AGENT_URL=http://consumer-agent:8000
-      - CONSUMER_AGENT_INTERNAL_RPC_URL=http://consumer-agent:8000/a2a/jsonrpc
-      - DATA_DIR=/data
-      - AI_DAILY_TOKEN_LIMIT=20000
-      - AI_FUNCTION_CALLING_MODE=${AI_FUNCTION_CALLING_MODE:-openai}
-      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
-      - OPENAI_MODEL=${OPENAI_MODEL:-gpt-4o-mini}
+      <<: *auth-environment
+      AGENT_ROLE: producer
+      A2A_PUBLIC_URL: http://localhost:8010
+      CONSUMER_AGENT_URL: http://consumer-agent:8000
+      CONSUMER_AGENT_INTERNAL_RPC_URL: http://consumer-agent:8000/a2a/jsonrpc
+      DATA_DIR: /data
+      AI_DAILY_TOKEN_LIMIT: "20000"
+      AI_FUNCTION_CALLING_MODE: ${AI_FUNCTION_CALLING_MODE:-openai}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4o-mini}
     volumes:
       - ai_usage_data:/data
     depends_on:
@@ -113,7 +175,7 @@ services:
       - todo-net
 
   nginx:
-    image: nginx:latest
+    image: nginx:1.28-alpine
     ports:
       - "8080:80"
     volumes:
@@ -131,6 +193,7 @@ networks:
     driver: bridge
 
 volumes:
+  keycloak_data:
   rabbitmq_data:
   user_data:
   task_data:

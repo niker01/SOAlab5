@@ -41,6 +41,9 @@ def initialize_database() -> None:
                 email TEXT NOT NULL UNIQUE,
                 password_hash TEXT NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS deleted_users (
+                user_id TEXT PRIMARY KEY
+            );
             CREATE TABLE IF NOT EXISTS outbox (
                 event_id TEXT PRIMARY KEY,
                 exchange_name TEXT NOT NULL,

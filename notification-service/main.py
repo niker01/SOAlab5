@@ -10,6 +10,7 @@ from urllib.request import Request, urlopen
 
 from fastapi import FastAPI, Header, HTTPException
 
+from auth import install_cors, verify_authorization
 from database import db_connection, enqueue_event, initialize_database
 from rabbitmq import publish_outbox_forever, start_consumer
 from schemas import NotificationSend, ReminderCreate, ReminderUpdate
@@ -17,6 +18,7 @@ from schemas import NotificationSend, ReminderCreate, ReminderUpdate
 
 app = FastAPI(title="Reminder & Notification Service")
 logger = logging.getLogger(__name__)
+install_cors(app)
 TASK_SERVICE_URL = "http://task-service:8000"
 
 
@@ -34,14 +36,11 @@ def _notification_dict(row):
     return notification
 
 
-def verify_token(authorization: Optional[str] = Header(None)):
-    if not authorization or not authorization.startswith("Bearer "):
-        raise HTTPException(status_code=401, detail="Unauthorized")
-    token = authorization[len("Bearer "):].strip()
-    token_prefix = "fake-jwt-token-"
-    if not token.startswith(token_prefix) or not token[len(token_prefix):]:
-        raise HTTPException(status_code=401, detail="Invalid token")
-    return token[len(token_prefix):]
+def verify_token(
+    authorization: Optional[str],
+    required_scope: str,
+) -> str:
+    return verify_authorization(authorization, [required_scope])["sub"]
 
 
 def _verify_task_ownership(task_id: str, authorization: Optional[str]) -> None:
@@ -470,7 +469,7 @@ def create_reminder(
     reminder: ReminderCreate,
     authorization: Optional[str] = Header(None)
 ):
-    user_id = verify_token(authorization)
+    user_id = verify_token(authorization, "notifications:write")
     _verify_task_ownership(reminder.task_id, authorization)
     reminder_id = str(uuid.uuid4())
     new_reminder = {
@@ -506,7 +505,7 @@ def create_reminder(
 
 @app.get("/reminders", response_model=List[dict])
 def get_reminders(authorization: Optional[str] = Header(None)):
-    user_id = verify_token(authorization)
+    user_id = verify_token(authorization, "notifications:read")
     with db_connection() as connection:
         reminders = connection.execute(
             "SELECT * FROM reminders WHERE user_id = ?",
@@ -520,7 +519,7 @@ def get_reminder(
     reminder_id: str,
     authorization: Optional[str] = Header(None)
 ):
-    user_id = verify_token(authorization)
+    user_id = verify_token(authorization, "notifications:read")
     with db_connection() as connection:
         reminder = _get_user_reminder(connection, reminder_id, user_id)
     return _reminder_dict(reminder)
@@ -532,7 +531,7 @@ def update_reminder(
     data: ReminderUpdate,
     authorization: Optional[str] = Header(None)
 ):
-    user_id = verify_token(authorization)
+    user_id = verify_token(authorization, "notifications:write")
     with db_connection() as connection:
         reminder = _get_user_reminder(connection, reminder_id, user_id)
         updated = _reminder_dict(reminder)
@@ -564,7 +563,7 @@ def delete_reminder(
     reminder_id: str,
     authorization: Optional[str] = Header(None)
 ):
-    user_id = verify_token(authorization)
+    user_id = verify_token(authorization, "notifications:write")
     with db_connection() as connection:
         _get_user_reminder(connection, reminder_id, user_id)
         connection.execute(
@@ -579,7 +578,7 @@ def send_notification(
     notification: NotificationSend,
     authorization: Optional[str] = Header(None)
 ):
-    user_id = verify_token(authorization)
+    user_id = verify_token(authorization, "notifications:write")
     if notification.user_id != user_id:
         raise HTTPException(status_code=404, detail="User not found")
     log_entry = {
@@ -614,7 +613,7 @@ def send_notification(
 
 @app.get("/notifications", response_model=List[dict])
 def get_notifications(authorization: Optional[str] = Header(None)):
-    user_id = verify_token(authorization)
+    user_id = verify_token(authorization, "notifications:read")
     with db_connection() as connection:
         notifications = connection.execute(
             "SELECT * FROM notification_log WHERE user_id = ?",
@@ -628,7 +627,7 @@ def get_notification(
     notification_id: str,
     authorization: Optional[str] = Header(None)
 ):
-    user_id = verify_token(authorization)
+    user_id = verify_token(authorization, "notifications:read")
     with db_connection() as connection:
         notification = _get_user_notification(connection, notification_id, user_id)
     return _notification_dict(notification)
@@ -639,7 +638,7 @@ def delete_notification(
     notification_id: str,
     authorization: Optional[str] = Header(None)
 ):
-    user_id = verify_token(authorization)
+    user_id = verify_token(authorization, "notifications:write")
     with db_connection() as connection:
         _get_user_notification(connection, notification_id, user_id)
         connection.execute(

@@ -7,12 +7,12 @@ from mcp.server.mcpserver import Context
 from mcp.server.transport_security import TransportSecuritySettings
 from pydantic import Field
 
+from auth import install_cors, require_bearer_token
 from api_client import (
     NOTIFICATION_SERVICE_URL,
     TASK_SERVICE_URL,
     api_request,
     get_current_user,
-    require_bearer_token,
 )
 
 
@@ -22,7 +22,7 @@ mcp = MCPServer("Todo REST API")
 def _token(ctx: Context) -> str:
     headers = ctx.headers or {}
     authorization = headers.get("authorization") or headers.get("Authorization")
-    return require_bearer_token(authorization)
+    return require_bearer_token(authorization, ["mcp:use"])
 
 
 def _validated_user(ctx: Context) -> tuple[str, dict]:
@@ -360,10 +360,14 @@ app = mcp.streamable_http_app(
             "host.docker.internal:8004",
             "localhost:8004",
             "127.0.0.1:8004",
+            "cad.kpi.ua",
+            "cad.kpi.ua:8004",
         ],
         allowed_origins=[
             "http://localhost:6274",
             "http://127.0.0.1:6274",
+            "https://cad.kpi.ua",
         ],
     )
 )
+install_cors(app)
