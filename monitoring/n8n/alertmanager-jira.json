@@ -1,0 +1,98 @@
+{
+  "name": "Alertmanager to Jira incidents",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "alertmanager",
+        "responseMode": "onReceived",
+        "options": {}
+      },
+      "id": "fd7d646f-e8a9-4cec-9f8c-b15de58a2862",
+      "name": "Alertmanager Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        260,
+        300
+      ],
+      "webhookId": "4c2b9c15-0791-43fd-9e3f-07be7d0f3184"
+    },
+    {
+      "parameters": {
+        "jsCode": "const input = $input.first().json;\nconst payload = input.body ?? input;\nconst alerts = Array.isArray(payload.alerts) ? payload.alerts : [];\nreturn alerts\n  .filter((alert) => alert.status === 'firing')\n  .map((alert) => ({\n    json: {\n      alertname: alert.labels?.alertname ?? 'UnknownAlert',\n      severity: alert.labels?.severity ?? 'warning',\n      service: alert.labels?.service ?? alert.labels?.job ?? 'unknown',\n      summary: alert.annotations?.summary ?? 'No summary provided',\n      description: alert.annotations?.description ?? 'No description provided',\n      instance: alert.labels?.instance ?? 'unknown',\n      startsAt: alert.startsAt ?? new Date().toISOString(),\n      fingerprint: alert.fingerprint ?? 'unknown',\n      generatorURL: alert.generatorURL ?? '',\n      traceId: alert.labels?.trace_id ?? alert.annotations?.trace_id ?? 'n/a'\n    }\n  }));"
+      },
+      "id": "2e0eb5d4-c86c-4c48-b306-85e811e08bc9",
+      "name": "Expand firing alerts",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        500,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://YOUR-ATLASSIAN-SITE.atlassian.net/rest/api/3/issue",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBasicAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Accept",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ { fields: { project: { key: 'YOUR_PROJECT_KEY' }, issuetype: { name: 'Task' }, summary: `[${$json.severity}] ${$json.alertname} — ${$json.service}`.slice(0, 250), description: { type: 'doc', version: 1, content: [{ type: 'paragraph', content: [{ type: 'text', text: `Summary: ${$json.summary}\\nDescription: ${$json.description}\\nService: ${$json.service}\\nInstance: ${$json.instance}\\nStarted: ${$json.startsAt}\\nFingerprint: ${$json.fingerprint}\\nTrace ID: ${$json.traceId}\\nAlert: ${$json.generatorURL}` }] }] } } } }}",
+        "options": {}
+      },
+      "id": "1c5a491a-7169-4f2e-8e11-56e3a8dfaf63",
+      "name": "Create Jira incident",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        760,
+        300
+      ]
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Alertmanager Webhook": {
+      "main": [
+        [
+          {
+            "node": "Expand firing alerts",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Expand firing alerts": {
+      "main": [
+        [
+          {
+            "node": "Create Jira incident",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "0a857fbf-1a8e-47fe-9f65-e246f15df1d5",
+  "meta": {
+    "templateCredsSetupCompleted": false
+  },
+  "tags": []
+}

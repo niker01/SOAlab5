@@ -2,6 +2,7 @@ import httpx
 from fastapi import HTTPException
 
 from auth import decode_access_token
+from observability import current_traceparent
 
 
 TASK_SERVICE_URL = "http://task-service:8000"
@@ -23,10 +24,14 @@ def api_request(
     payload: dict | None = None,
 ):
     try:
+        headers = {"Authorization": f"Bearer {token}"}
+        traceparent = current_traceparent()
+        if traceparent:
+            headers["traceparent"] = traceparent
         response = httpx.request(
             method,
             f"{base_url}{path}",
-            headers={"Authorization": f"Bearer {token}"},
+            headers=headers,
             json=payload,
             timeout=5,
         )

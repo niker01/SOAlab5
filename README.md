@@ -1,6 +1,6 @@
 # Запуск проєкту та приклади запитів
 
-Цей документ містить лише необхідне для налаштування, запуску й перевірки проєкту через Postman та MCP Inspector. Усі команди Docker виконуй у PowerShell з кореневої папки проєкту.
+Цей документ містить інструкції з налаштування, запуску й перевірки проєкту через Postman, MCP Inspector та локальний стек моніторингу. Усі команди Docker виконуй у PowerShell з кореневої папки проєкту.
 
 ## Event Storming сесія
 ![Event Storming сесія](images/eventstorming.png)
@@ -52,9 +52,16 @@ SOAlab/
 │   ├── rabbitmq.py             # Отримання подій від інших сервісів
 │   ├── requirements.txt
 │   └── Dockerfile
+├── monitoring/
+│   ├── prometheus.yml       # Цілі збору метрик
+│   ├── alerts.yml           # Правила сповіщень
+│   ├── alertmanager.yml     # Передавання сповіщень у n8n
+│   ├── grafana/             # Джерело Prometheus і dashboard
+│   └── n8n/                 # Workflow створення Jira-інциденту
 ├── nginx/
 │   └── nginx.conf             # Маршрутизація API-запитів до сервісів
 ├── auth.py                    # Спільна перевірка JWT, OAuth scopes і CORS
+├── observability.py           # Метрики HTTP, trace context і структуровані логи
 ├── keycloak/
 │   ├── soa-realm.json         # Realm, OAuth clients, scopes та PKCE
 │   └── configure-atlassian.sh # Необов'язкове підключення Atlassian OIDC
@@ -118,6 +125,35 @@ docker compose logs --tail=100 consumer-agent
 docker compose logs --tail=100 mcp-server
 docker compose logs --tail=100 keycloak
 ```
+
+## Моніторинг і автоматичне створення інцидентів
+
+Prometheus, Grafana, Alertmanager, n8n та експортери запускаються разом із проєктом командою `docker compose up --build -d`.
+
+Локальні адреси:
+
+- Grafana: `http://localhost:3001`;
+- Prometheus: `http://localhost:9090`;
+- Alertmanager: `http://localhost:9093`;
+- n8n: `http://localhost:6001`.
+
+Початковий локальний пароль Grafana — `admin`. Зміни його у своєму `.env` через `GRAFANA_ADMIN_PASSWORD`; для користувача можна задати `GRAFANA_ADMIN_USER`. Не використовуй пароль за замовчуванням поза локальним середовищем. Під час першого відкриття n8n створи локальний обліковий запис.
+
+Кожен FastAPI-сервіс надає `/metrics` та `/health`; наприклад, метрики Task Service доступні на `http://localhost:8002/metrics`. Prometheus збирає лічильники HTTP-запитів і гістограми тривалості запитів. Grafana автоматично налаштовує Prometheus як джерело та завантажує dashboard `SOAlab Overview`, де відображаються p50/p95/p99 затримки, пропускна здатність, частка відповідей 5xx, стан компонентів, черги RabbitMQ та розподіл запитів між сервісами й маршрутами.
+
+Кожен HTTP-запит має W3C Trace Context (`traceparent`). Gateway передає його сервісам, а внутрішні HTTP-виклики A2A/REST поширюють той самий trace ID. Структуровані JSON-записи містять `trace_id`, `span_id`, назву сервісу, маршрут, код відповіді та тривалість. Переглядати їх можна через `docker compose logs`; токени та тіла запитів у журнал не записуються.
+
+Prometheus формує сповіщення, коли компонент недоступний щонайменше хвилину, p99 затримка HTTP перевищує 1 секунду протягом 5 хвилин, частка відповідей 5xx перевищує 5% протягом 5 хвилин або в черзі RabbitMQ понад 10 повідомлень очікують протягом 2 хвилин.
+
+Alertmanager передає активні сповіщення до webhook n8n. Щоб n8n автоматично створював Jira-інциденти:
+
+1. Відкрий `http://localhost:6001` і створи локальний обліковий запис n8n.
+2. Імпортуй workflow з `monitoring/n8n/alertmanager-jira.json`.
+3. У n8n створи облікові дані **HTTP Basic Auth**: ім’я користувача — email Atlassian, пароль — Atlassian API token. Не використовуй пароль від Atlassian-акаунта.
+4. У вузлі **Create Jira incident** вибери ці облікові дані. Заміни `YOUR-ATLASSIAN-SITE` на адресу сайту формату `назва.atlassian.net`, а `YOUR_PROJECT_KEY` — на ключ Jira-проєкту. Переконайся, що в проєкті доступний тип задачі `Task`.
+5. Збережи й активуй workflow. Шлях `alertmanager` у webhook має збігатися з URL `http://n8n:5678/webhook/alertmanager`, налаштованим для Alertmanager у Docker-мережі.
+
+**Обмеження архітектури:** SOAlab не використовує coordinator/shards і репліковану базу даних. Сервіси зберігають дані в окремих SQLite-базах. Тому dashboard показує здоров’я Gateway і сервісів та розподіл запитів між сервісами; shard distribution і replication lag у цій архітектурі відсутні. Кількість повідомлень RabbitMQ показана як backlog подій, а не як replication lag.
 
 Зупинити сервіси, зберігши дані:
 

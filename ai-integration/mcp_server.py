@@ -8,6 +8,7 @@ from mcp.server.transport_security import TransportSecuritySettings
 from pydantic import Field
 
 from auth import install_cors, require_bearer_token
+from observability import install_observability
 from api_client import (
     NOTIFICATION_SERVICE_URL,
     TASK_SERVICE_URL,
@@ -371,3 +372,4 @@ app = mcp.streamable_http_app(
     )
 )
 install_cors(app)
+install_observability(app, "mcp-server")

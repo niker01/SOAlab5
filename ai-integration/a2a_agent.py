@@ -38,6 +38,7 @@ from a2a.types import (
 from pydantic import BaseModel, ConfigDict, Field
 
 from auth import install_cors, require_bearer_token
+from observability import current_traceparent, install_observability
 from api_client import (
     APIRequestError,
     TASK_SERVICE_URL,
@@ -100,10 +101,14 @@ async def _notify_consumer(task: dict, token: str) -> None:
     )
     completed = False
     try:
+        traceparent = current_traceparent()
+        service_parameters = {"Authorization": f"Bearer {token}"}
+        if traceparent:
+            service_parameters["traceparent"] = traceparent
         async for event in client.send_message(
             SendMessageRequest(message=request),
             context=ClientCallContext(
-                service_parameters={"Authorization": f"Bearer {token}"}
+                service_parameters=service_parameters
             ),
         ):
             if event.HasField("task"):
@@ -357,6 +362,7 @@ def _build_app(role: str) -> FastAPI:
     def health() -> dict:
         return {"status": "ok", "agent": role}
 
+    install_observability(app, f"{role}-agent")
     return app
 
 

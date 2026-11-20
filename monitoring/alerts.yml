@@ -1,0 +1,38 @@
+groups:
+  - name: SOAlab availability and performance
+    rules:
+      - alert: ServiceDown
+        expr: up{job=~"api-gateway|user-service|task-service|notification-service|mcp-server|producer-agent|consumer-agent|rabbitmq"} == 0 or probe_success{job="n8n-probe"} == 0 or nginx_up == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "SOAlab component is unavailable: {{ $labels.job }}"
+          description: "Prometheus cannot scrape {{ $labels.instance }} for at least one minute."
+
+      - alert: HighP99Latency
+        expr: histogram_quantile(0.99, sum by (le, service) (rate(http_server_request_duration_seconds_bucket[5m]))) > 1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "P99 latency is high for {{ $labels.service }}"
+          description: "The service P99 HTTP latency has exceeded 1 second for five minutes."
+
+      - alert: HighServerErrorRate
+        expr: sum by (service) (rate(http_server_requests_total{status_code=~"5.."}[5m])) / clamp_min(sum by (service) (rate(http_server_requests_total[5m])), 0.001) > 0.05
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "HTTP 5xx rate is high for {{ $labels.service }}"
+          description: "More than five percent of requests have returned 5xx responses for five minutes."
+
+      - alert: RabbitMQEventBacklog
+        expr: sum by (queue) (rabbitmq_queue_messages_ready) > 10
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "RabbitMQ event backlog is growing"
+          description: "Queue {{ $labels.queue }} has more than ten messages waiting for two minutes."

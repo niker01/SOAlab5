@@ -1,0 +1,11 @@
+apiVersion: 1
+
+providers:
+  - name: SOAlab
+    orgId: 1
+    folder: SOAlab
+    type: file
+    disableDeletion: false
+    editable: true
+    options:
+      path: /var/lib/grafana/dashboards

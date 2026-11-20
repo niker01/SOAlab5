@@ -10,6 +10,7 @@ from fastapi import FastAPI, Header, HTTPException
 
 from auth import install_cors, verify_authorization
 from database import db_connection, enqueue_event, initialize_database
+from observability import install_observability
 from rabbitmq import (
     publish_outbox_forever,
     start_saga_consumer,
@@ -21,6 +22,7 @@ from schemas import TaskAssignList, TaskCreate, TaskListCreate, TaskListUpdate, 
 app = FastAPI(title="Task Service")
 logger = logging.getLogger(__name__)
 install_cors(app)
+install_observability(app, "task-service")
 SAGA_TIMEOUT_SECONDS = float(os.getenv("SAGA_TIMEOUT_SECONDS", "10"))
 SAGA_COMPENSATION_WAIT_SECONDS = 3
 

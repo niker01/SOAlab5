@@ -1,0 +1,17 @@
+route:
+  receiver: n8n-incident-workflow
+  group_by: ["alertname", "service", "job"]
+  group_wait: 10s
+  group_interval: 1m
+  repeat_interval: 2h
+  routes:
+    - matchers:
+        - severity="critical"
+      receiver: n8n-incident-workflow
+      group_wait: 5s
+
+receivers:
+  - name: n8n-incident-workflow
+    webhook_configs:
+      - url: http://n8n:5678/webhook/alertmanager
+        send_resolved: false
